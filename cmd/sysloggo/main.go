@@ -3,10 +3,13 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
+	"regexp"
 )
 
 const (
-	HOST = "localhost"
+	HOST    = "localhost"
+	LOGFILE = "syslog"
 )
 
 func udpListener() {
@@ -20,9 +23,9 @@ func udpListener() {
 	defer udpServer.Close()
 	for {
 		buf := make([]byte, 1024)
-		_, addr, err := udpServer.ReadFrom(buf)
+		_, _, err := udpServer.ReadFrom(buf)
 		if err == nil {
-			go processLog(buf, addr)
+			go processLog(buf)
 		}
 	}
 }
@@ -41,18 +44,26 @@ func tcpListener() {
 		if err != nil {
 			fmt.Println("Failed to establish connection")
 		} else {
-			buffer := make([]byte, 1024)
-			_, err := conn.Read(buffer)
+			buf := make([]byte, 1024)
+			_, err := conn.Read(buf)
 			conn.Close()
 			if err == nil {
-
+				go processLog(buf)
 			}
 		}
 	}
 }
 
-func processLog(buf []byte, addr net.Addr) {
+func processLog(buf []byte) {
+	// This regular expression matches a log in the IETF format.
+	matched, _ := regexp.Match(`^<[0-9]{1,2}>[0-9]{1} [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{0,9}|)Z [a-zA-Z0-9\.]+ [a-zA-Z0-9\.]+ - [a-zA-Z0-9\.]+ - ([^\n])+$`, buf)
+	if matched {
+		f, err := os.OpenFile(fmt.Sprintf("%s.log", LOGFILE), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			fmt.Println("Could not create/open log file.")
+		}
 
+	}
 }
 
 func main() {
