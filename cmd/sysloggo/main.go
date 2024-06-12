@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"regexp"
+	"sync"
+	"syscall"
 )
 
 const (
@@ -12,15 +15,30 @@ const (
 	LOGFILE = "syslog"
 )
 
-func udpListener() {
-	udpServer, err := net.ListenPacket("udp", "HOST"+":514")
+func cleanupListener(serverUdp *net.PacketConn, serverTcp *net.Listener) {
+	if serverUdp != nil {
+		(*serverUdp).Close()
+	} else {
+		(*serverTcp).Close()
+	}
+}
+
+func udpListener(wg *sync.WaitGroup, c *chan os.Signal) {
+	defer wg.Done()
+	udpServer, err := net.ListenPacket("udp", HOST+":514")
 	if err != nil {
 		fmt.Println("Failed to start UDP listener.")
 		return
 	}
 	fmt.Println("Started UDP logging.")
 
-	defer udpServer.Close()
+	go func() {
+		<-(*c)
+		cleanupListener(&udpServer, nil)
+		fmt.Println("Stopped UDP logging.")
+	}()
+
+	// defer udpServer.Close()
 	for {
 		buf := make([]byte, 1024)
 		_, _, err := udpServer.ReadFrom(buf)
@@ -30,15 +48,22 @@ func udpListener() {
 	}
 }
 
-func tcpListener() {
-	tcpServer, err := net.Listen("tcp", "HOST"+":6514")
+func tcpListener(wg *sync.WaitGroup, c *chan os.Signal) {
+	defer wg.Done()
+	tcpServer, err := net.Listen("tcp", HOST+":6514")
 	if err != nil {
 		fmt.Println("Failed to start TCP listener.")
 		return
 	}
 	fmt.Println("Started TCP logging.")
 
-	defer tcpServer.Close()
+	go func() {
+		<-(*c)
+		cleanupListener(nil, &tcpServer)
+		fmt.Println("Stopped TCP logging.")
+	}()
+
+	// defer tcpServer.Close()
 	for {
 		conn, err := tcpServer.Accept()
 		if err != nil {
@@ -61,13 +86,36 @@ func processLog(buf []byte) {
 		f, err := os.OpenFile(fmt.Sprintf("%s.log", LOGFILE), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 		if err != nil {
 			fmt.Println("Could not create/open log file.")
+		} else {
+			_, err := f.Write(buf)
+			if err != nil {
+				fmt.Println("Could not create the log entry.")
+			}
+			f.Close()
 		}
-
+	} else {
+		f, err := os.OpenFile(fmt.Sprintf("%s-invalid.log", LOGFILE), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			fmt.Println("Could not create/open log file.")
+		} else {
+			_, err := f.Write(buf)
+			if err != nil {
+				fmt.Println("Could not create the log entry.")
+			}
+			f.Close()
+		}
 	}
 }
 
 func main() {
 	fmt.Println("Starting logging...")
-	go udpListener()
-	go tcpListener()
+	var wg sync.WaitGroup
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	wg.Add(2)
+	go udpListener(&wg, &c)
+	go tcpListener(&wg, &c)
+
+	wg.Wait()
 }
