@@ -12,6 +12,10 @@ import (
 	"syscall"
 )
 
+// HOST	   = The host where the server will run
+// LOGFILE = The file name where the logs will be saved to. The extension will be .log
+// UDPPORT = The UDP port where the UDP listener will run on
+// TCPPORT = The TCP port where the TCP listener will run on
 const (
 	HOST    = "localhost"
 	LOGFILE = "syslog"
@@ -19,6 +23,7 @@ const (
 	TCPPORT = "6514"
 )
 
+// Server variables are global to allow for graceful shutdown upon key interrupt.
 var globalUdpServer *net.PacketConn
 var globalTcpServer *net.Listener
 
@@ -26,6 +31,8 @@ var m sync.Mutex
 
 var c = make(chan os.Signal)
 
+// This function gets called when the user interrupts code execution with Ctrl+C
+// This allows for files that are being written to to not be corrupted.
 func cleanup() {
 	<-c
 	fmt.Println()
@@ -43,6 +50,7 @@ func cleanup() {
 	fmt.Println("Stopped logging successfully.")
 }
 
+// Starts the UDP listener
 func udpListener(wg *sync.WaitGroup) {
 	defer wg.Done()
 	udpServer, err := net.ListenPacket("udp", fmt.Sprintf("%s:%s", HOST, UDPPORT))
@@ -65,6 +73,7 @@ func udpListener(wg *sync.WaitGroup) {
 	}
 }
 
+// Starts the TCP listener
 func tcpListener(wg *sync.WaitGroup) {
 	defer wg.Done()
 	tcpServer, err := net.Listen("tcp", fmt.Sprintf("%s:%s", HOST, TCPPORT))
@@ -95,12 +104,14 @@ func tcpListener(wg *sync.WaitGroup) {
 	}
 }
 
+// Processes log files received according to the IETF format
 func processLog(wg *sync.WaitGroup, buf []byte) {
 	wg.Add(1)
 	defer wg.Done()
 	// Removes null characters from byte slice
 	buf = bytes.Trim(buf, "\x00")
 	// This regular expression matches a log in the IETF format.
+	// If the expression is not matched, the log is still saved in another file with an appended "-invalid".
 	matched, _ := regexp.Match(`^<[0-9]{1,2}>[0-9]{1} [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{0,9}|)Z [a-zA-Z0-9\.]+ [a-zA-Z0-9\.]+ - [a-zA-Z0-9\.]+ - ([^\n])+$`, buf)
 	m.Lock()
 	if matched {
@@ -132,6 +143,7 @@ func processLog(wg *sync.WaitGroup, buf []byte) {
 }
 
 func main() {
+	// Command to bind Ctrl+C to graceful shutdown of the program
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go cleanup()
 	fmt.Println("Starting logging...")
